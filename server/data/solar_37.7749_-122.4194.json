@@ -1,0 +1,18 @@
+{
+  "location": {
+    "lat": 37.7749,
+    "lon": -122.4194,
+    "encoded_lat": 127774900,
+    "encoded_lon": 57580600
+  },
+  "solar": {
+    "dni": 4.05,
+    "ghi": 4.34,
+    "lat_tilt": 4.96
+  },
+  "metadata": {
+    "timestamp": 1772600859,
+    "tx_hash": "0x8018bcd4c4c4590f71d42ca91b17bbac49eed0771523f11925e7d61b657cb71a",
+    "oracle_address": "0x3894481b4dab10b691e954de7836b39fab6ea587861a613792aabd2f21008747"
+  }
+}

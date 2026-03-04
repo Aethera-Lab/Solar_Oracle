@@ -4,24 +4,20 @@ import * as dotenv from "dotenv";
 import dns from "dns";
 import http from "http";
 import https from "https";
+import { ShelbyClient } from "@shelby-protocol/sdk/node";
+import fs from "fs";
 
-// Force IPv4 first to avoid IPv6 connection issues
+dns.setServers(["1.1.1.1", "8.8.8.8"]);
 dns.setDefaultResultOrder('ipv4first');
-
 dotenv.config();
-//api.shelby.xyz
+
 // Configuration
 const NREL_API_KEY = process.env.NREL_API_KEY!;
 const ORACLE_PRIVATE_KEY = process.env.ORACLE_PRIVATE_KEY!;
 const MODULE_ADDRESS = process.env.MODULE_ADDRESS!;
 const NETWORK = process.env.NETWORK || "devnet";
-
-// Shelby congig 
 const SHELBY_API_KEY = process.env.SHELBY_API_KEY!;
-const SHELBY_PROVIDER_ID = process.env.SHELBY_PROVIDER_ID!;
 
-
-// Create HTTP agents with IPv4 forced
 const httpAgent = new http.Agent({ 
   keepAlive: true, 
   family: 4,
@@ -35,20 +31,14 @@ const httpsAgent = new https.Agent({
   rejectUnauthorized: true,
 });
 
-// Initialize Aptos client
-const config = new AptosConfig({ 
-  network: NETWORK as Network 
-});
+const config = new AptosConfig({ network: NETWORK as Network });
 const aptos = new Aptos(config);
 
-// Oracle account (from private key)
 const privateKey = new Ed25519PrivateKey(ORACLE_PRIVATE_KEY);
 const oracleAccount = Account.fromPrivateKey({ privateKey });
 
 console.log(`🔑 Oracle Address: ${oracleAccount.accountAddress.toString()}`);
 
-
-// NREL API Types
 interface NRELResponse {
   outputs: {
     avg_dni: { annual: number };
@@ -60,11 +50,12 @@ interface NRELResponse {
 interface SolarData {
   latitude: number;
   longitude: number;
-  dni: number;  // Direct Normal Irradiance (kWh/m²/day * 100)
-  ghi: number;  // Global Horizontal Irradiance (kWh/m²/day * 100)
-  lat_tilt: number; // Latitude Tilt (kWh/m²/day * 100)
+  dni: number;
+  ghi: number;
+  lat_tilt: number;
   timestamp: number;
 }
+
 interface ShelbyOracleData {
   location: {
     lat: number;
@@ -84,11 +75,37 @@ interface ShelbyOracleData {
   };
 }
 
+/** Amount to request from ShelbyUSD faucet (smallest units; 100_000_000 = 100 ShelbyUSD) */
+const SHELBYUSD_FUND_AMOUNT = 100_000_000;
 
-// Coordinate encoding for u64 compatibility
-// Move uses u64 (unsigned), so we shift coordinates to positive range:
-// Latitude: -90 to +90 → add 90 → 0 to 180
-// Longitude: -180 to +180 → add 180 → 0 to 360
+/**
+ * Ensure the oracle account has ShelbyUSD on ShelbyNet for blob storage payments.
+ * Call once per run when Shelby integration is enabled.
+ */
+async function ensureShelbyUSDBalance(): Promise<void> {
+  try {
+    const shelby = new ShelbyClient({
+      apiKey: SHELBY_API_KEY,
+      network: Network.SHELBYNET,
+    });
+    const address = oracleAccount.accountAddress.toString();
+    await shelby.fundAccountWithShelbyUSD({
+      address,
+      amount: SHELBYUSD_FUND_AMOUNT,
+    });
+    console.log(`✅ Oracle funded with ShelbyUSD for blob storage`);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("Failed to fund") || msg.includes("faucet")) {
+      console.warn(
+        `⚠️ ShelbyUSD funding skipped or failed. If blob upload fails, fund manually: https://docs.shelby.xyz/apis/faucet/shelbyusd`
+      );
+    } else {
+      console.warn(`⚠️ ShelbyUSD pre-fund check:`, msg);
+    }
+  }
+}
+
 function encodeLatitude(lat: number): number {
   return Math.floor((lat + 90) * 1000000);
 }
@@ -97,9 +114,6 @@ function encodeLongitude(lon: number): number {
   return Math.floor((lon + 180) * 1000000);
 }
 
-/**
- * Fetch solar resource data from NREL API
- */
 async function fetchSolarData(lat: number, lon: number): Promise<SolarData> {
   console.log(`📡 Fetching NREL data for lat: ${lat}, lon: ${lon}`);
   console.log(`🔑 Using API key: ${NREL_API_KEY ? NREL_API_KEY.substring(0, 8) + '...' : 'NOT SET'}`);
@@ -108,17 +122,13 @@ async function fetchSolarData(lat: number, lon: number): Promise<SolarData> {
     const response = await axios.get<NRELResponse>(
       "https://developer.nrel.gov/api/solar/solar_resource/v1.json",
       {
-        params: {
-          api_key: NREL_API_KEY,
-          lat: lat,
-          lon: lon,
-        },
-        timeout: 60000,  // 60 second timeout
-        httpAgent: httpAgent,
-        httpsAgent: httpsAgent,
-        proxy: false,    // Disable proxy
+        params: { api_key: NREL_API_KEY, lat, lon },
+        timeout: 60000,
+        httpAgent,
+        httpsAgent,
+        proxy: false,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           'Accept': 'application/json',
         },
       }
@@ -126,12 +136,9 @@ async function fetchSolarData(lat: number, lon: number): Promise<SolarData> {
 
     const outputs = response.data.outputs;
     
-    // Convert to integers (multiply by 100 to preserve 2 decimal places)
-    // Move doesn't support floats, so we store as u64
-    // Coordinates are shifted to positive range for u64 compatibility
     const solarData: SolarData = {
-      latitude: encodeLatitude(lat),    // Shifted: lat + 90
-      longitude: encodeLongitude(lon),  // Shifted: lon + 180
+      latitude: encodeLatitude(lat),
+      longitude: encodeLongitude(lon),
       dni: Math.floor(outputs.avg_dni.annual * 100),
       ghi: Math.floor(outputs.avg_ghi.annual * 100),
       lat_tilt: Math.floor(outputs.avg_lat_tilt.annual * 100),
@@ -159,9 +166,6 @@ async function fetchSolarData(lat: number, lon: number): Promise<SolarData> {
   }
 }
 
-/**
- * Push solar data on-chain to Aptos
- */
 async function pushToChain(data: SolarData): Promise<string> {
   try {
     console.log(`📤 Pushing to Aptos blockchain...`);
@@ -199,73 +203,175 @@ async function pushToChain(data: SolarData): Promise<string> {
     throw error;
   }
 }
-// Push oracle data to Shelby for client consumption 
+
+/**
+ * Store data in Shelby (creates JSON file locally and uploads as a blob)
+ */
 async function pushToShelby(
   lat: number,
   lon: number,
   data: SolarData,
   txHash: string
-): Promise<void> {
-  try {
-    console.log(`📤 Publishing to Shelby...`);
+): Promise<ShelbyOracleData> {
+  console.log(`📤 Publishing to Shelby...`);
 
-    const shelbyData: ShelbyOracleData = {
-      location: {
-        lat,
-        lon,
-        encoded_lat: data.latitude,
-        encoded_lon: data.longitude,
-      },
-      solar: {
-        dni: data.dni / 100, // Convert back to decimal
-        ghi: data.ghi / 100,
-        lat_tilt: data.lat_tilt / 100,
-      },
-      metadata: {
-        timestamp: data.timestamp,
-        tx_hash: txHash,
-        oracle_address: MODULE_ADDRESS,
-      },
+  const shelbyData: ShelbyOracleData = {
+    location: {
+      lat,
+      lon,
+      encoded_lat: data.latitude,
+      encoded_lon: data.longitude,
+    },
+    solar: {
+      dni: data.dni / 100,
+      ghi: data.ghi / 100,
+      lat_tilt: data.lat_tilt / 100,
+    },
+    metadata: {
+      timestamp: data.timestamp,
+      tx_hash: txHash,
+      oracle_address: MODULE_ADDRESS,
+    },
+  };
+
+  try {
+    const outputDir = "data";
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+
+    const shelby = new ShelbyClient({
+      apiKey: SHELBY_API_KEY,
+      network: Network.SHELBYNET,
+    });
+
+    // Create JSON file on disk
+    const fileName = `${outputDir}/solar_${lat}_${lon}.json`;
+    fs.writeFileSync(fileName, JSON.stringify(shelbyData, null, 2));
+
+    // Upload JSON as a Shelby blob
+    const fileBytes = fs.readFileSync(fileName);
+    const expirationMicros =
+      Date.now() * 1000 + 24 * 60 * 60 * 1_000_000; // 24h from now
+
+    await shelby.upload({
+      blobData: fileBytes,
+      signer: oracleAccount,
+      blobName: fileName,
+      expirationMicros,
+    });
+
+    console.log(`✅ Published to Shelby blob storage for ${fileName}`);
+
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    const isInsufficientFunds =
+      msg.includes("E_INSUFFICIENT_FUNDS") ||
+      msg.includes("insufficient funds") ||
+      msg.toLowerCase().includes("blob storage");
+    if (isInsufficientFunds) {
+      console.error(`❌ Failed to publish to Shelby: not enough ShelbyUSD for blob storage.`);
+      console.error(
+        `   💡 Fund your oracle with ShelbyUSD: https://docs.shelby.xyz/apis/faucet/shelbyusd`
+      );
+    } else {
+      console.error(`❌ Failed to publish to Shelby:`, error);
+    }
+  }
+
+  return shelbyData;
+}
+
+/**
+ * Store aggregated data (all locations in one file)
+ */
+async function storeAggregatedData(allData: ShelbyOracleData[]): Promise<void> {
+  try {
+    console.log(`\n📦 Storing aggregated oracle data...`);
+
+    const outputDir = "data";
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+
+    const shelby = new ShelbyClient({
+      apiKey: SHELBY_API_KEY,
+      network: Network.SHELBYNET,
+    });
+
+    const aggregated = {
+      timestamp: Date.now(),
+      total_locations: allData.length,
+      oracle_address: MODULE_ADDRESS,
+      network: NETWORK,
+      locations: allData,
     };
 
-    // Option 1: Use Shelby SDK (when available)
-    /*
-    await shelbyProvider.publishData({
-      key: `solar_${lat}_${lon}`,
-      value: shelbyData,
-      timestamp: data.timestamp,
-    });
-    */
+    const fileName = `${outputDir}/oracle-data-${Date.now()}.json`;
+    fs.writeFileSync(fileName, JSON.stringify(aggregated, null, 2));
 
-    // // Option 2: Direct API call to Shelby
-    // await axios.post(
-    //   "https://api.shelbynet.shelby.xyz/v1/oracle/publish",
-    //   {
-    //     provider_id: SHELBY_PROVIDER_ID,
-    //     data_key: `solar_oracle_${lat}_${lon}`,
-    //     data: shelbyData,
-    //     chain: "aptos",
-    //     network: NETWORK,
-    //     timestamp: data.timestamp,
-    //   },
-    //   {
-    //     headers: {
-    //       "Authorization": `Bearer ${SHELBY_API_KEY}`,
-    //       "Content-Type": "application/json",
-    //     },
-    //   }
-    // );
+    const fileBytes = fs.readFileSync(fileName);
+    const expirationMicros =
+      Date.now() * 1000 + 24 * 60 * 60 * 1_000_000; // 24h from now
 
-    console.log(`✅ Published to Shelby: solar_${lat}_${lon}`);
-  } catch (error) {
-    console.error(`❌ Failed to publish to Shelby:`, error);
-    // Don't throw - Shelby is optional, blockchain is primary source
+    const uploadPayload = {
+      blobs: [
+        { blobData: fileBytes, blobName: fileName },
+      ],
+      signer: oracleAccount,
+      expirationMicros,
+    };
+
+    const maxTries = 3;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxTries; attempt++) {
+      try {
+        await shelby.batchUpload(uploadPayload);
+        console.log(`✅ Aggregated oracle data stored in ${fileName} and uploaded to Shelby`);
+        return;
+      } catch (e) {
+        lastError = e;
+        const msg = e instanceof Error ? e.message : String(e);
+        const isServerError =
+          msg.includes("multipart upload") ||
+          msg.includes("500") ||
+          msg.includes("Internal Server Error");
+        if (isServerError && attempt < maxTries) {
+          console.warn(
+            `   ⚠️ Shelby upload attempt ${attempt}/${maxTries} failed (server error). Retrying in 3s...`
+          );
+          await new Promise((r) => setTimeout(r, 3000));
+        } else {
+          throw e;
+        }
+      }
+    }
+    throw lastError;
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    const isInsufficientFunds =
+      msg.includes("E_INSUFFICIENT_FUNDS") ||
+      msg.includes("insufficient funds") ||
+      msg.toLowerCase().includes("blob storage");
+    const isShelbyServerError =
+      msg.includes("multipart upload") ||
+      msg.includes("500") ||
+      msg.includes("Internal Server Error");
+
+    if (isInsufficientFunds) {
+      console.error(`❌ Failed to store aggregated data: not enough ShelbyUSD for blob storage.`);
+      console.error(
+        `   💡 Fund your oracle with ShelbyUSD: https://docs.shelby.xyz/apis/faucet/shelbyusd (or ShelbyNet faucet)`
+      );
+    } else if (isShelbyServerError) {
+      console.error(`❌ Shelby upload failed (server error). Aggregated data was saved locally.`);
+      console.error(`   📁 Local file: data/oracle-data-*.json — use it or retry the run later.`);
+    } else {
+      console.error(`❌ Failed to store aggregated data:`, error);
+    }
   }
 }
 
-
-// Read solar data from blockchain
- 
 async function readFromChain(lat: number, lon: number): Promise<void> {
   try {
     const latEncoded = encodeLatitude(lat);
@@ -285,9 +391,9 @@ async function readFromChain(lat: number, lon: number): Promise<void> {
   }
 }
 
-
- // Main oracle update cycle
- 
+/**
+ * Main oracle update cycle
+ */
 async function updateOracle(locations: Array<{ lat: number; lon: number }>) {
   console.log(`\n🚀 Starting Oracle Update Cycle`);
   console.log(`   Network: ${NETWORK}`);
@@ -295,24 +401,31 @@ async function updateOracle(locations: Array<{ lat: number; lon: number }>) {
   console.log(`   Locations: ${locations.length}`);
   console.log(`   Shelby Integration: ${SHELBY_API_KEY ? 'Enabled' : 'Disabled'}`);
 
+  const allShelbyData: ShelbyOracleData[] = [];
+
+  // Ensure oracle has ShelbyUSD on ShelbyNet for blob storage (before any Shelby uploads)
+  if (SHELBY_API_KEY) {
+    await ensureShelbyUSDBalance();
+  }
+
   for (const loc of locations) {
     try {
       console.log(`\n📍 Processing location: ${loc.lat}, ${loc.lon}`);
       
-      // Fetch from NREL
+      // 1. Fetch from NREL
       const solarData = await fetchSolarData(loc.lat, loc.lon);
       
-      // Push to Aptos
+      // 2. Push to Aptos (blockchain is source of truth)
       const txHash = await pushToChain(solarData);
       
-      // 3. Publish to Shelby (for easy client access)
+      // 3. Push to Shelby (for frontend to fetch later)
       if (SHELBY_API_KEY) {
-        await pushToShelby(loc.lat, loc.lon, solarData, txHash);
+        const shelbyData = await pushToShelby(loc.lat, loc.lon, solarData, txHash);
+        allShelbyData.push(shelbyData);
       }
 
       console.log(`✅ Successfully updated location ${loc.lat}, ${loc.lon}`);
       
-      // Wait 2 seconds between updates to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, 2000));
       
     } catch (error) {
@@ -320,12 +433,14 @@ async function updateOracle(locations: Array<{ lat: number; lon: number }>) {
     }
   }
 
+  // Store all data in one aggregated file (easier for frontend)
+  if (SHELBY_API_KEY && allShelbyData.length > 0) {
+    await storeAggregatedData(allShelbyData);
+  }
+
   console.log(`\n✅ Oracle update cycle completed\n`);
 }
 
-
- //Initialize oracle (deploy module if needed)
- 
 async function initialize() {
   console.log(`\n🔧 Initializing Oracle Module...`);
   
@@ -355,31 +470,19 @@ async function initialize() {
   }
 }
 
-// US Locations only - NREL API only supports US locations!
-// See: https://developer.nrel.gov/docs/solar/solar-resource-v1/
 const LOCATIONS = [
   { lat: 37.7749, lon: -122.4194 }, // San Francisco, CA
   { lat: 40.7128, lon: -74.0060 },  // New York City, NY
   { lat: 33.4484, lon: -112.0740 }, // Phoenix, AZ
 ];
 
-// Run oracle
 (async () => {
   try {
-    // Initialize module (run once)
     // await initialize();
-    
-    // Update solar data
     await updateOracle(LOCATIONS);
-    
-    // Read back data (verification)
     await readFromChain(LOCATIONS[0].lat, LOCATIONS[0].lon);
-    
   } catch (error) {
     console.error("Fatal error:", error);
     process.exit(1);
   }
 })();
-
-// For production: run this on a schedule (cron job / setInterval)
-// setInterval(() => updateOracle(LOCATIONS), 24 * 60 * 60 * 1000); // Daily
