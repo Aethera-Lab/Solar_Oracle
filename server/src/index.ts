@@ -4,17 +4,21 @@ import * as dotenv from "dotenv";
 import dns from "dns";
 import http from "http";
 import https from "https";
-
 // Force IPv4 first to avoid IPv6 connection issues
 dns.setDefaultResultOrder('ipv4first');
 
 dotenv.config();
-
+//api.shelby.xyz
 // Configuration
 const NREL_API_KEY = process.env.NREL_API_KEY!;
 const ORACLE_PRIVATE_KEY = process.env.ORACLE_PRIVATE_KEY!;
 const MODULE_ADDRESS = process.env.MODULE_ADDRESS!;
 const NETWORK = process.env.NETWORK || "devnet";
+
+// Shelby congig 
+const SHELBY_API_KEY = process.env.SHELBY_API_KEY!;
+const SHELBY_PROVIDER_ID = process.env.SHELBY_PROVIDER_ID!;
+
 
 // Create HTTP agents with IPv4 forced
 const httpAgent = new http.Agent({ 
@@ -42,6 +46,7 @@ const oracleAccount = Account.fromPrivateKey({ privateKey });
 
 console.log(`🔑 Oracle Address: ${oracleAccount.accountAddress.toString()}`);
 
+
 // NREL API Types
 interface NRELResponse {
   outputs: {
@@ -59,6 +64,25 @@ interface SolarData {
   lat_tilt: number; // Latitude Tilt (kWh/m²/day * 100)
   timestamp: number;
 }
+interface ShelbyOracleData {
+  location: {
+    lat: number;
+    lon: number;
+    encoded_lat: number;
+    encoded_lon: number;
+  };
+  solar: {
+    dni: number;
+    ghi: number;
+    lat_tilt: number;
+  };
+  metadata: {
+    timestamp: number;
+    tx_hash: string;
+    oracle_address: string;
+  };
+}
+
 
 // Coordinate encoding for u64 compatibility
 // Move uses u64 (unsigned), so we shift coordinates to positive range:
@@ -174,6 +198,70 @@ async function pushToChain(data: SolarData): Promise<string> {
     throw error;
   }
 }
+// Push oracle data to Shelby for client consumption 
+async function pushToShelby(
+  lat: number,
+  lon: number,
+  data: SolarData,
+  txHash: string
+): Promise<void> {
+  try {
+    console.log(`📤 Publishing to Shelby...`);
+
+    const shelbyData: ShelbyOracleData = {
+      location: {
+        lat,
+        lon,
+        encoded_lat: data.latitude,
+        encoded_lon: data.longitude,
+      },
+      solar: {
+        dni: data.dni / 100, // Convert back to decimal
+        ghi: data.ghi / 100,
+        lat_tilt: data.lat_tilt / 100,
+      },
+      metadata: {
+        timestamp: data.timestamp,
+        tx_hash: txHash,
+        oracle_address: MODULE_ADDRESS,
+      },
+    };
+
+    // Option 1: Use Shelby SDK (when available)
+    /*
+    await shelbyProvider.publishData({
+      key: `solar_${lat}_${lon}`,
+      value: shelbyData,
+      timestamp: data.timestamp,
+    });
+    */
+
+    // Option 2: Direct API call to Shelby
+    await axios.post(
+      "https://api.shelbynet.shelby.xyz/v1/oracle/publish",
+      {
+        provider_id: SHELBY_PROVIDER_ID,
+        data_key: `solar_oracle_${lat}_${lon}`,
+        data: shelbyData,
+        chain: "aptos",
+        network: NETWORK,
+        timestamp: data.timestamp,
+      },
+      {
+        headers: {
+          "Authorization": `Bearer ${SHELBY_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    console.log(`✅ Published to Shelby: solar_${lat}_${lon}`);
+  } catch (error) {
+    console.error(`❌ Failed to publish to Shelby:`, error);
+    // Don't throw - Shelby is optional, blockchain is primary source
+  }
+}
+
 
 // Read solar data from blockchain
  
@@ -204,6 +292,7 @@ async function updateOracle(locations: Array<{ lat: number; lon: number }>) {
   console.log(`   Network: ${NETWORK}`);
   console.log(`   Module: ${MODULE_ADDRESS}`);
   console.log(`   Locations: ${locations.length}`);
+  console.log(`   Shelby Integration: ${SHELBY_API_KEY ? 'Enabled' : 'Disabled'}`);
 
   for (const loc of locations) {
     try {
@@ -215,6 +304,11 @@ async function updateOracle(locations: Array<{ lat: number; lon: number }>) {
       // Push to Aptos
       const txHash = await pushToChain(solarData);
       
+      // 3. Publish to Shelby (for easy client access)
+      if (SHELBY_API_KEY) {
+        await pushToShelby(loc.lat, loc.lon, solarData, txHash);
+      }
+
       console.log(`✅ Successfully updated location ${loc.lat}, ${loc.lon}`);
       
       // Wait 2 seconds between updates to avoid rate limiting
