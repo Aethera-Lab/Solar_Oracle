@@ -1,0 +1,62 @@
+{
+  "timestamp": 1772601123657,
+  "total_locations": 3,
+  "oracle_address": "0x3894481b4dab10b691e954de7836b39fab6ea587861a613792aabd2f21008747",
+  "network": "devnet",
+  "locations": [
+    {
+      "location": {
+        "lat": 37.7749,
+        "lon": -122.4194,
+        "encoded_lat": 127774900,
+        "encoded_lon": 57580600
+      },
+      "solar": {
+        "dni": 4.05,
+        "ghi": 4.34,
+        "lat_tilt": 4.96
+      },
+      "metadata": {
+        "timestamp": 1772601104,
+        "tx_hash": "0x688d9719ebf864dc8ed972e3c6661efbe2035ede47a6d4a802f906b2feed04f6",
+        "oracle_address": "0x3894481b4dab10b691e954de7836b39fab6ea587861a613792aabd2f21008747"
+      }
+    },
+    {
+      "location": {
+        "lat": 40.7128,
+        "lon": -74.006,
+        "encoded_lat": 130712800,
+        "encoded_lon": 105994000
+      },
+      "solar": {
+        "dni": 3.79,
+        "ghi": 3.93,
+        "lat_tilt": 4.62
+      },
+      "metadata": {
+        "timestamp": 1772601112,
+        "tx_hash": "0xf67aacbf5ab77f102ed6bdb6ac07f21d038e12716165157742501a1e32a24e63",
+        "oracle_address": "0x3894481b4dab10b691e954de7836b39fab6ea587861a613792aabd2f21008747"
+      }
+    },
+    {
+      "location": {
+        "lat": 33.4484,
+        "lon": -112.074,
+        "encoded_lat": 123448399,
+        "encoded_lon": 67926000
+      },
+      "solar": {
+        "dni": 7.35,
+        "ghi": 5.78,
+        "lat_tilt": 6.68
+      },
+      "metadata": {
+        "timestamp": 1772601117,
+        "tx_hash": "0xff23fd8b5ffaa7f7913e5f55e34ab2632b4b65198d31b641a2bf4f8fd701a90a",
+        "oracle_address": "0x3894481b4dab10b691e954de7836b39fab6ea587861a613792aabd2f21008747"
+      }
+    }
+  ]
+}
