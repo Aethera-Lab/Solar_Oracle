@@ -4,6 +4,7 @@ import * as dotenv from "dotenv";
 import dns from "dns";
 import http from "http";
 import https from "https";
+
 // Force IPv4 first to avoid IPv6 connection issues
 dns.setDefaultResultOrder('ipv4first');
 
@@ -236,24 +237,24 @@ async function pushToShelby(
     });
     */
 
-    // Option 2: Direct API call to Shelby
-    await axios.post(
-      "https://api.shelbynet.shelby.xyz/v1/oracle/publish",
-      {
-        provider_id: SHELBY_PROVIDER_ID,
-        data_key: `solar_oracle_${lat}_${lon}`,
-        data: shelbyData,
-        chain: "aptos",
-        network: NETWORK,
-        timestamp: data.timestamp,
-      },
-      {
-        headers: {
-          "Authorization": `Bearer ${SHELBY_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    // // Option 2: Direct API call to Shelby
+    // await axios.post(
+    //   "https://api.shelbynet.shelby.xyz/v1/oracle/publish",
+    //   {
+    //     provider_id: SHELBY_PROVIDER_ID,
+    //     data_key: `solar_oracle_${lat}_${lon}`,
+    //     data: shelbyData,
+    //     chain: "aptos",
+    //     network: NETWORK,
+    //     timestamp: data.timestamp,
+    //   },
+    //   {
+    //     headers: {
+    //       "Authorization": `Bearer ${SHELBY_API_KEY}`,
+    //       "Content-Type": "application/json",
+    //     },
+    //   }
+    // );
 
     console.log(`✅ Published to Shelby: solar_${lat}_${lon}`);
   } catch (error) {
