@@ -1,4 +1,4 @@
-## Solar Oracle
+<h1>Solar Oracle</h1>
 
 **Solar Oracle** is an Aptos-based oracle that periodically fetches solar irradiance data from the NREL API for a set of geographic locations, pushes the encoded values on-chain, and optionally stores structured oracle snapshots in Shelby blob storage and on disk as JSON.
 
