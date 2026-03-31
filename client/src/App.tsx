@@ -12,7 +12,7 @@ declare global {
 }
 // Your oracle configuration
 const ORACLE_ADDRESS = "0x3894481b4dab10b691e954de7836b39fab6ea587861a613792aabd2f21008747";
-const NETWORK = "devnet";
+const NETWORK = "testnet";
 
 // Locations your oracle is tracking (from your backend LOCATIONS array)
 const TRACKED_LOCATIONS = [

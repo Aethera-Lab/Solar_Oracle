@@ -486,3 +486,4 @@ const LOCATIONS = [
     process.exit(1);
   }
 })();
+
